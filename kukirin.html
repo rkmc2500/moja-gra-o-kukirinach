@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KuKirin Empire 3D - Ucieczka przed Policją</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #05070e;
+            color: white;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none;
+        }
+        canvas {
+            background: #05070e;
+            border: 3px solid #FF6600;
+            box-shadow: 0 0 20px rgba(255, 102, 0, 0.4);
+            max-width: 100%;
+            max-height: 70vh;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        button {
+            background: #151824;
+            color: white;
+            border: 2px solid #FF6600;
+            padding: 12px 18px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        button:active {
+            background: #FF6600;
+            color: black;
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas" width="800" height="650"></canvas>
+
+    <!-- Przyciski dotykowe dla telefonów / tabletów -->
+    <div class="controls">
+        <button ontouchstart="keys['a']=true" ontouchend="keys['a']=false" onmousedown="keys['a']=true" onmouseup="keys['a']=false">◀ LEWO</button>
+        <button ontouchstart="keys['w']=true" ontouchend="keys['w']=false" onmousedown="keys['w']=true" onmouseup="keys['w']=false">GAZ 🚀</button>
+        <button ontouchstart="keys['space']=true" ontouchend="keys['space']=false" onmousedown="keys['space']=true" onmouseup="keys['space']=false">WHEELIE</button>
+        <button ontouchstart="keys['d']=true" ontouchend="keys['d']=false" onmousedown="keys['d']=true" onmouseup="keys['d']=false">PRAWO ▶</button>
+        <button onclick="toggleShop()">SKLEP [B]</button>
+    </div>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+const WIDTH = 800;
+const HEIGHT = 650;
+const HORIZON_Y = 205;
+const DASH_Y = HEIGHT - 110;
+const ROAD_BOTTOM_Y = DASH_Y;
+
+const SCOOTERS = [
+    { name: "KuKirin G2", price: 0, max_kmh: 56, cruise: 38, wheelie: 52, drain: 0.022, accent: "#FF5500", deck: "#1e2029", stype: "single", voltage: "48V" },
+    { name: "KuKirin G2 Ultra", price: 800, max_kmh: 70, cruise: 46, wheelie: 65, drain: 0.020, accent: "#FF7700", deck: "#222530", stype: "single_pro", voltage: "48V" },
+    { name: "KuKirin G2 Master", price: 2000, max_kmh: 74, cruise: 50, wheelie: 70, drain: 0.018, accent: "#FF3300", deck: "#191b24", stype: "double", voltage: "52V" },
+    { name: "KuKirin G4", price: 3800, max_kmh: 90, cruise: 60, wheelie: 85, drain: 0.016, accent: "#FF6600", deck: "#1f212b", stype: "g4", voltage: "60V" },
+    { name: "KuKirin G4 Ultra", price: 6500, max_kmh: 150, cruise: 95, wheelie: 145, drain: 0.013, accent: "#FFB700", deck: "#14151c", stype: "g4", voltage: "72V" },
+    { name: "KuKirin G5", price: 10000, max_kmh: 200, cruise: 130, wheelie: 195, drain: 0.010, accent: "#00F0FF", deck: "#101420", stype: "g5", voltage: "84V" }
+];
+
+let money = 0;
+let owned = new Set([0]);
+let currentScooter = 0;
+let inShop = false;
+
+let playerX = 0.0;
+let steerTilt = 0.0;
+let kmh = 38.0;
+let battery = 100.0;
+let score = 0.0;
+let runMoney = 0.0;
+let isWheelie = false;
+let wheelieAngle = 0.0;
+let roadPhase = 0.0;
+let flashTick = 0;
+let gameOver = false;
+
+let cops = [];
+let batteries = [];
+let cashPickups = [];
+let sparks = [];
+let scenery = [];
+for(let i=0; i<8; i++) scenery.push([Math.random() < 0.5 ? -1.32 : 1.32, i * 0.125, i % 2]);
+
+let stars = [];
+for(let i=0; i<55; i++) stars.push([Math.random()*WIDTH, Math.random()*(HORIZON_Y-50), ["#ffffff","#aaccff","#ffddaa"][Math.floor(Math.random()*3)]]);
+
+let buildings = [];
+let bx = 0;
+while(bx < WIDTH) {
+    let bw = 42 + Math.floor(Math.random()*38);
+    let bh = 35 + Math.floor(Math.random()*70);
+    let wins = [];
+    for(let wy = HORIZON_Y - bh + 8; wy < HORIZON_Y - 10; wy += 12) {
+        for(let wx = bx + 6; wx < bx + bw - 8; wx += 10) {
+            if(Math.random() < 0.45) wins.push([wx, wy, ["#ffd966","#88ccff","#ffaa44"][Math.floor(Math.random()*3)]]);
+        }
+    }
+    buildings.push([bx, HORIZON_Y - bh, bx + bw, HORIZON_Y, wins]);
+    bx += bw - 2;
+}
+
+const keys = {};
+window.addEventListener("keydown", e => {
+    let k = e.key.toLowerCase();
+    if(k === "arrowleft") keys['a'] = true;
+    if(k === "arrowright") keys['d'] = true;
+    if(k === "arrowup") keys['w'] = true;
+    if(k === "arrowdown") keys['s'] = true;
+    if(e.code === "Space") keys['space'] = true;
+    if(k === "b") toggleShop();
+    if(inShop && ['1','2','3','4','5','6'].includes(k)) buyScooter(parseInt(k)-1);
+    if(gameOver && e.code === "Enter") resetRun();
+    keys[k] = true;
+});
+window.addEventListener("keyup", e => {
+    let k = e.key.toLowerCase();
+    if(k === "arrowleft") keys['a'] = false;
+    if(k === "arrowright") keys['d'] = false;
+    if(k === "arrowup") keys['w'] = false;
+    if(k === "arrowdown") keys['s'] = false;
+    if(e.code === "Space") keys['space'] = false;
+    keys[k] = false;
+});
+
+function toggleShop() {
+    inShop = !inShop;
+}
+
+function buyScooter(idx) {
+    let s = SCOOTERS[idx];
+    if(owned.has(idx)) {
+        currentScooter = idx;
+    } else if(money >= s.price) {
+        money -= s.price;
+        owned.add(idx);
+        currentScooter = idx;
+    }
+}
+
+function resetRun() {
+    playerX = 0.0;
+    steerTilt = 0.0;
+    let sc = SCOOTERS[currentScooter];
+    kmh = sc.cruise;
+    battery = 100.0;
+    score = 0.0;
+    runMoney = 0.0;
+    isWheelie = false;
+    wheelieAngle = 0.0;
+    gameOver = false;
+    cops = [];
+    batteries = [];
+    cashPickups = [];
+    sparks = [];
+}
+
+function project(x_norm, z) {
+    let depth = Math.pow(1.0 - z, 1.75);
+    let sy = HORIZON_Y + depth * (ROAD_BOTTOM_Y - HORIZON_Y);
+    let half_w = 42 + depth * 360;
+    let cam_offset = playerX * (1.0 - depth) * 70;
+    let sx = (WIDTH / 2) - cam_offset + x_norm * half_w;
+    let scale = 0.10 + depth * 0.90;
+    return [sx, sy, scale, half_w];
+}
+
+function update() {
+    if(!gameOver && !inShop) {
+        let sc = SCOOTERS[currentScooter];
+
+        if(keys['space'] && battery > 3) {
+            isWheelie = true;
+            wheelieAngle = Math.min(1.0, wheelieAngle + 0.10);
+            battery -= 0.015;
+            if(Math.random() < 0.85) {
+                let p = project(playerX, 0.12);
+                sparks.push([p[0] + (Math.random()*28-14), ROAD_BOTTOM_Y - 10, Math.random()*7-3.5, Math.random()*-4.5-1, Math.floor(Math.random()*7+6)]);
+            }
+        } else {
+            isWheelie = false;
+            wheelieAngle = Math.max(0.0, wheelieAngle - 0.12);
+        }
+
+        let target_kmh = sc.cruise;
+        if(keys['w'] || keys['arrowup']) target_kmh = isWheelie ? sc.wheelie : sc.max_kmh;
+        if(keys['s'] || keys['arrowdown']) target_kmh = 25;
+
+        kmh += (target_kmh - kmh) * 0.10;
+
+        let t_spd = (isWheelie ? 0.021 : 0.032) * (1.0 + Math.max(0, (kmh - 90) / 220));
+        if(keys['a'] || keys['arrowleft']) { playerX -= t_spd; steerTilt = Math.max(-1.0, steerTilt - 0.18); }
+        else if(keys['d'] || keys['arrowright']) { playerX += t_spd; steerTilt = Math.min(1.0, steerTilt + 0.18); }
+        else { steerTilt *= 0.78; }
+        playerX = Math.max(-0.85, Math.min(0.85, playerX));
+
+        let z_speed = (kmh / 90.0) * 0.0155;
+        roadPhase = (roadPhase + z_speed * 6) % 1.0;
+        flashTick++;
+
+        let mult = isWheelie ? 2.5 : 1.0;
+        let dist_gain = kmh / 300.0;
+        score += dist_gain;
+        runMoney += dist_gain * 1.6 * mult;
+        if(runMoney >= 1) {
+            let add = Math.floor(runMoney);
+            money += add;
+            runMoney -= add;
+        }
+
+        battery -= sc.drain * (kmh / 75.0);
+
+        for(let sc_item of scenery) {
+            sc_item[1] -= z_speed * 1.15;
+            if(sc_item[1] < 0.02) { sc_item[1] = 1.0; sc_item[0] = Math.random() < 0.5 ? -1.32 : 1.32; }
+        }
+
+        for(let i = sparks.length - 1; i >= 0; i--) {
+            sparks[i][0] += sparks[i][2];
+            sparks[i][1] += sparks[i][3];
+            sparks[i][4]--;
+            if(sparks[i][4] <= 0) sparks.splice(i, 1);
+        }
+
+        if(cops.length < 3 && Math.random() < 0.028) {
+            let lx = [-0.6, -0.2, 0.2, 0.6][Math.floor(Math.random()*4)] + (Math.random()*0.12 - 0.06);
+            if(cops.every(c => Math.abs(1.0 - c[1]) > 0.30)) cops.push([lx, 1.0, Math.random()*0.3 + 0.6]);
+        }
+
+        if(batteries.length < 2 && Math.random() < 0.015) batteries.push([Math.random()*1.3 - 0.65, 1.0]);
+        if(cashPickups.length < 2 && Math.random() < 0.025) cashPickups.push([Math.random()*1.3 - 0.65, 1.0]);
+
+        for(let c of cops) {
+            c[1] -= z_speed * c[2];
+            if(c[1] > 0.06 && c[1] < 0.18 && Math.abs(playerX - c[0]) < 0.22) { gameOver = true; kmh = 0; }
+        }
+        cops = cops.filter(c => c[1] > 0.01);
+
+        for(let b of batteries) {
+            b[1] -= z_speed * 0.85;
+            if(b[1] > 0.05 && b[1] < 0.21 && Math.abs(playerX - b[0]) < 0.25) { battery = Math.min(100, battery + 35); b[1] = -1; }
+        }
+        batteries = batteries.filter(b => b[1] > 0.01);
+
+        for(let cp of cashPickups) {
+            cp[1] -= z_speed * 0.85;
+            if(cp[1] > 0.05 && cp[1] < 0.21 && Math.abs(playerX - cp[0]) < 0.26) { money += 150; cp[1] = -1; }
+        }
+        cashPickups = cashPickups.filter(cp => cp[1] > 0.01);
+
+        if(battery <= 0) { battery = 0; gameOver = true; kmh = 0; }
+    }
+}
+
+function draw() {
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+    let sc = SCOOTERS[currentScooter];
+
+    // Niebo i miasto
+    let skyColors = ["#04050a", "#070a14", "#0b1021", "#101730", "#172042"];
+    let bandH = HORIZON_Y / skyColors.length;
+    skyColors.forEach((col, i) => {
+        ctx.fillStyle = col;
+        ctx.fillRect(0, i * bandH, WIDTH, bandH + 2);
+    });
+
+    ctx.fillStyle = "#1c2747"; ctx.beginPath(); ctx.arc(675, 60, 35, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = "#eef5ff"; ctx.beginPath(); ctx.arc(670, 55, 30, 0, Math.PI*2); ctx.fill();
+
+    stars.forEach(st => {
+        ctx.fillStyle = st[2];
+        ctx.fillRect(st[0], st[1], 2, 2);
+    });
+
+    buildings.forEach(b => {
+        ctx.fillStyle = "#0c0f1d";
+        ctx.fillRect(b[0], b[1], b[2]-b[0], b[3]-b[1]);
+        b[4].forEach(w => {
+            ctx.fillStyle = w[2];
+            ctx.fillRect(w[0], w[1], 4, 6);
+        });
+    });
+
+    // Droga 3D
+    let numSlices = 26;
+    for(let i=0; i<numSlices; i++) {
+        let z1 = 1.0 - (i / numSlices);
+        let z2 = 1.0 - ((i + 1) / numSlices);
+        let p1 = project(0, z1), p2 = project(0, z2);
+        let stripe = Math.floor(i + roadPhase * 8) % 2;
+
+        ctx.fillStyle = stripe === 0 ? "#0d2612" : "#113017";
+        ctx.fillRect(0, p1[1], WIDTH, p2[1] - p1[1] + 1);
+
+        let hw1 = p1[3], hw2 = p2[3];
+        let cw1 = Math.max(2, hw1 * 0.065), cw2 = Math.max(3, hw2 * 0.065);
+        ctx.fillStyle = stripe === 0 ? "#e01b1b" : "#f0f0f5";
+        ctx.beginPath();
+        ctx.moveTo(p1[0] - hw1 - cw1, p1[1]); ctx.lineTo(p1[0] + hw1 + cw1, p1[1]);
+        ctx.lineTo(p2[0] + hw2 + cw2, p2[1]); ctx.lineTo(p2[0] - hw2 - cw2, p2[1]);
+        ctx.fill();
+
+        ctx.fillStyle = stripe === 0 ? "#1c1d24" : "#22232b";
+        ctx.beginPath();
+        ctx.moveTo(p1[0] - hw1, p1[1]); ctx.lineTo(p1[0] + hw1, p1[1]);
+        ctx.lineTo(p2[0] + hw2, p2[1]); ctx.lineTo(p2[0] - hw2, p2[1]);
+        ctx.fill();
+    }
+
+    // Obiekty
+    let queue = [];
+    scenery.forEach(sc => queue.push(['scenery', sc[1], sc]));
+    batteries.forEach(b => queue.push(['bat', b[1], b]));
+    cashPickups.forEach(cp => queue.push(['cash', cp[1], cp]));
+    cops.forEach(c => queue.push(['cop', c[1], c]));
+    queue.sort((a,b) => a[1] - b[1]);
+
+    queue.forEach(item => {
+        let type = item[0], obj = item[2];
+        let p = project(obj[0], obj[1]);
+        let scale = p[2], sx = p[0], sy = p[1];
+
+        if(type === 'scenery') {
+            if(obj[2] === 0) {
+                let ph = 145 * scale;
+                ctx.fillStyle = "#2a2e3a"; ctx.fillRect(sx - 2, sy - ph, 4, ph);
+                ctx.fillStyle = "#fffae0"; ctx.beginPath(); ctx.arc(sx + (obj[0]<0?20:-20), sy - ph, 8*scale, 0, Math.PI*2); ctx.fill();
+            } else {
+                let th = 52 * scale, cr = 56 * scale;
+                ctx.fillStyle = "#332010"; ctx.fillRect(sx - 8*scale, sy - th, 16*scale, th);
+                ctx.fillStyle = "#123816"; ctx.beginPath(); ctx.arc(sx, sy - th - cr*0.5, cr, 0, Math.PI*2); ctx.fill();
+            }
+        } else if(type === 'bat') {
+            let w = 44 * scale, h = 52 * scale;
+            if(w > 2) {
+                ctx.fillStyle = "#12161f"; ctx.strokeStyle = "#00ff66"; ctx.lineWidth = 2;
+                ctx.fillRect(sx - w/2, sy - h, w, h); ctx.strokeRect(sx - w/2, sy - h, w, h);
+                ctx.fillStyle = "#00ff66"; ctx.fillRect(sx - w*0.35, sy - h*0.8, w*0.7, h*0.6);
+            }
+        } else if(type === 'cash') {
+            let w = 50 * scale, h = 28 * scale;
+            if(w > 2) {
+                ctx.fillStyle = "#1b7329"; ctx.strokeStyle = "#ffd700"; ctx.lineWidth = 2;
+                ctx.fillRect(sx - w/2, sy - h, w, h); ctx.strokeRect(sx - w/2, sy - h, w, h);
+            }
+        } else if(type === 'cop') {
+            let w = 116 * scale, h = 86 * scale;
+            if(w > 4) {
+                ctx.fillStyle = "#eef0f6"; ctx.fillRect(sx - w/2, sy - h*0.62, w, h*0.62);
+                ctx.fillStyle = "#0044b3"; ctx.fillRect(sx - w/2, sy - h*0.35, w, h*0.25);
+                ctx.fillStyle = (Math.floor(flashTick/4)%2===0) ? "#0099ff" : "#ff1111";
+                ctx.fillRect(sx - w*0.25, sy - h*0.62, w*0.25, 8*scale);
+                ctx.fillStyle = (Math.floor(flashTick/4)%2===0) ? "#ff1111" : "#0099ff";
+                ctx.fillRect(sx, sy - h*0.62, w*0.25, 8*scale);
+            }
+        }
+    });
+
+    // Hulajnoga Gracza
+    let p = project(playerX, 0.12);
+    let px = p[0], py = p[1];
+    let tilt = steerTilt * 16;
+    let w_lift = wheelieAngle * 50;
+
+    ctx.fillStyle = "#1f1408"; ctx.beginPath(); ctx.arc(px, py - 4, 38, 0, Math.PI*2); ctx.fill();
+    sparks.forEach(s => {
+        ctx.fillStyle = ["#FFF000", sc.accent, "#FFF"][Math.floor(Math.random()*3)];
+        ctx.fillRect(s[0], s[1], 4, 4);
+    });
+
+    // Deck
+    let deck_front_y = py - 42 - w_lift * 0.68;
+    ctx.fillStyle = sc.deck; ctx.strokeStyle = sc.accent; ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(px - 19 + tilt*0.55, deck_front_y);
+    ctx.lineTo(px + 19 + tilt*0.55, deck_front_y);
+    ctx.lineTo(px + 28, py - 11);
+    ctx.lineTo(px - 28, py - 11);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Sztyca i kierownica
+    let stem_top_x = px + tilt;
+    let stem_top_y = py - 104 - w_lift;
+    ctx.strokeStyle = sc.accent; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(px + tilt*0.48, deck_front_y); ctx.lineTo(stem_top_x, stem_top_y); ctx.stroke();
+
+    ctx.fillStyle = "#04070b"; ctx.strokeStyle = sc.accent; ctx.lineWidth = 2;
+    ctx.fillRect(stem_top_x - 16, stem_top_y - 14, 32, 20);
+    ctx.strokeRect(stem_top_x - 16, stem_top_y - 14, 32, 20);
+    ctx.fillStyle = isWheelie ? "#FF9900" : "#00F0FF";
+    ctx.font = "bold 11px monospace"; ctx.textAlign = "center";
+    ctx.fillText(Math.round(kmh), stem_top_x, stem_top_y);
+
+    // Górny pasek kasy
+    ctx.fillStyle = "#0b0d14"; ctx.strokeStyle = sc.accent; ctx.lineWidth = 2;
+    ctx.fillRect(15, 12, 295, 36); ctx.strokeRect(15, 12, 295, 36);
+    ctx.fillStyle = "#00ff66"; ctx.font = "bold 15px monospace"; ctx.textAlign = "left";
+    ctx.fillText(`KASA: ${money} ZŁ`, 28, 36);
+
+    ctx.fillStyle = "#0b0d14"; ctx.strokeStyle = "#ffd700";
+    ctx.fillRect(WIDTH - 215, 12, 200, 36); ctx.strokeRect(WIDTH - 215, 12, 200, 36);
+    ctx.fillStyle = "#ffd700"; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("[B] SKLEP KUKIRIN", WIDTH - 115, 35);
+
+    // Dolny panel LCD
+    ctx.fillStyle = "#090a0f"; ctx.strokeStyle = "#252836"; ctx.lineWidth = 3;
+    ctx.fillRect(0, DASH_Y, WIDTH, HEIGHT - DASH_Y); ctx.strokeRect(0, DASH_Y, WIDTH, HEIGHT - DASH_Y);
+    ctx.strokeStyle = sc.accent;
+    ctx.strokeRect(165, DASH_Y + 8, 470, HEIGHT - DASH_Y - 16);
+
+    ctx.fillStyle = isWheelie ? "#FF9900" : "#00F0FF"; ctx.font = "bold 42px monospace"; ctx.textAlign = "center";
+    ctx.fillText(String(Math.round(kmh)).padStart(2, '0'), WIDTH/2 - 12, DASH_Y + 52);
+    ctx.fillStyle = "#99aabb"; ctx.font = "bold 13px sans-serif";
+    ctx.fillText("km/h", WIDTH/2 + 58, DASH_Y + 45);
+
+    ctx.fillStyle = sc.accent; ctx.font = "bold 10px sans-serif";
+    ctx.fillText(`${sc.name.toUpperCase()} [MAX ${sc.max_kmh} KM/H]`, WIDTH/2, DASH_Y + 91);
+
+    // Okno sklepu
+    if(inShop) {
+        ctx.fillStyle = "rgba(5, 7, 14, 0.95)";
+        ctx.fillRect(75, 45, WIDTH - 150, DASH_Y - 60);
+        ctx.strokeStyle = sc.accent; ctx.lineWidth = 4;
+        ctx.strokeRect(75, 45, WIDTH - 150, DASH_Y - 60);
+
+        ctx.fillStyle = "white"; ctx.font = "bold 22px sans-serif"; ctx.textAlign = "center";
+        ctx.fillText("SKLEP / GARAŻ KUKIRIN", WIDTH/2, 85);
+        ctx.fillStyle = "#00ff66"; ctx.font = "bold 16px monospace";
+        ctx.fillText(`PORTFEL: ${money} ZŁ`, WIDTH/2, 115);
+
+        SCOOTERS.forEach((s, i) => {
+            let y = 145 + i * 52;
+            let isOwned = owned.has(i);
+            let isEquipped = (i === currentScooter);
+            ctx.fillStyle = isEquipped ? "#1c2233" : (isOwned ? "#121622" : "#0e1017");
+            ctx.fillRect(105, y, WIDTH - 210, 44);
+            ctx.strokeStyle = isEquipped ? s.accent : (isOwned ? "#00ff66" : "#333846");
+            ctx.strokeRect(105, y, WIDTH - 210, 44);
+
+            ctx.fillStyle = s.accent; ctx.font = "bold 13px sans-serif"; ctx.textAlign = "left";
+            ctx.fillText(`[${i+1}] ${s.name}`, 125, y + 27);
+            ctx.fillStyle = "#ccd6e6"; ctx.font = "12px monospace";
+            ctx.fillText(`V-Max: ${s.max_kmh} km/h | ${s.voltage}`, 340, y + 27);
+
+            ctx.fillStyle = isEquipped ? "#00F0FF" : (isOwned ? "#00ff66" : "#ffd700");
+            ctx.textAlign = "right";
+            ctx.fillText(isEquipped ? "AKTYWNY" : (isOwned ? "POSIADANY" : `${s.price} ZŁ`), WIDTH - 125, y + 27);
+        });
+
+        ctx.fillStyle = "#ffd700"; ctx.font = "bold 12px sans-serif"; ctx.textAlign = "center";
+        ctx.fillText("Wciśnij [1-6] na klawiaturze, aby kupić lub zmienić model | [B] aby wrócić", WIDTH/2, DASH_Y - 30);
+    }
+
+    if(gameOver) {
+        ctx.fillStyle = "rgba(10, 10, 15, 0.9)";
+        ctx.fillRect(150, 130, 500, 280);
+        ctx.strokeStyle = sc.accent; ctx.lineWidth = 4; ctx.strokeRect(150, 130, 500, 280);
+
+        ctx.fillStyle = "#ff2222"; ctx.font = "bold 32px sans-serif"; ctx.textAlign = "center";
+        ctx.fillText("KONIEC JAZDY!", WIDTH/2, 185);
+        ctx.fillStyle = "white"; ctx.font = "bold 15px sans-serif";
+        ctx.fillText(battery <= 0 ? "BATERIA PADŁA!" : "ZŁAPANY PRZEZ POLICJĘ!", WIDTH/2, 230);
+        ctx.fillStyle = "#00ff66"; ctx.font = "bold 16px monospace";
+        ctx.fillText(`Zarobione pieniądze: ${money} ZŁ`, WIDTH/2, 275);
+        ctx.fillStyle = "#ffd700"; ctx.font = "bold 13px sans-serif";
+        ctx.fillText("Wciśnij [ENTER] lub [B] (Sklep)", WIDTH/2, 335);
+    }
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+requestAnimationFrame(gameLoop);
+</script>
+
+</body>
+</html>
